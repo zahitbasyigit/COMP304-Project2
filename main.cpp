@@ -271,11 +271,19 @@ int main(int argc, char *argv[]) {
         } else if (car->direction == EAST) {
             directionString = "E";
         }
+        string crossTimeString = "X";
 
-        logFile << "   " << car->carid << "    \t"
+        if (car->crossTime == -1) {
+            crossTimeString = "X";
+        } else {
+            crossTimeString = to_string(crossTimeTM.tm_hour) + ":" + to_string(crossTimeTM.tm_min) + ":" +
+                              to_string(crossTimeTM.tm_sec);
+        }
+
+        logFile << "   " << car->carid << "\t"
                 << directionString << "     \t"
                 << arrivalTimeTM.tm_hour << ":" << arrivalTimeTM.tm_min << ":" << arrivalTimeTM.tm_sec << "  \t"
-                << crossTimeTM.tm_hour << ":" << crossTimeTM.tm_min << ":" << crossTimeTM.tm_sec << "  \t"
+                << crossTimeString <<   "\t"
                 << car->waitTime
                 << endl;
     }
