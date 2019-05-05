@@ -33,7 +33,6 @@ public:
     int carid;
     int arrivalTime;
     int crossTime;
-    string directionString;
 
     Car() {
         pthread_mutex_lock(&carIdLock);
@@ -71,6 +70,13 @@ int sTime = 0;
 int currentTime = 0;
 int logTime = 0;
 double probability = 0;
+
+
+//North sleep
+pthread_mutex_t wakeNorthMutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t wakeNorthCond = PTHREAD_COND_INITIALIZER;
+int northSleepingTime = 0;
+
 
 //Log
 pthread_mutex_t logLock = PTHREAD_MUTEX_INITIALIZER;
@@ -134,24 +140,22 @@ int main(int argc, char *argv[]) {
     pthread_create(&threads[3], NULL, directionThread, (void *) EAST);
     pthread_create(&threads[4], NULL, policeOfficerThread, (void *) NULL);
 
+    printf("started\n");
+
     Car *westCar = new Car();
     westCar->direction = WEST;
-    westCar->directionString = "W";
     westCar->arrivalTime = 0;
 
     Car *eastCar = new Car();
     eastCar->direction = EAST;
-    eastCar->directionString = "E";
     eastCar->arrivalTime = 0;
 
     Car *northCar = new Car();
     northCar->direction = NORTH;
-    northCar->directionString = "N";
     northCar->arrivalTime = 0;
 
     Car *southCar = new Car();
     southCar->direction = SOUTH;
-    southCar->directionString = "S";
     southCar->arrivalTime = 0;
 
     westDirection->cars.emplace_back(westCar);
@@ -183,20 +187,28 @@ int main(int argc, char *argv[]) {
             threadSafeWriteToConsole("  " + to_string(southDirection->cars.size()));
         }
 
-        /*printf("-------------------------------------\n");
+        printf("-------------------------------------\n");
         cout << "Time  : " << currentTime + 1 << "/" << sTime << "   " <<
              "N: " << northDirection->cars.size() << ", " <<
              "S: " << southDirection->cars.size() << ", " <<
              "E: " << eastDirection->cars.size() << ", " <<
              "W: " << westDirection->cars.size() <<
              endl << endl;
-*/
+
         if (policeOfficerIsGaming) {
             policeOfficerGamingTime--;
         }
 
 
         pthread_mutex_lock(&wakeDirectionsMutex);
+        if (northSleepingTime > 0) {
+            northSleepingTime--;
+            pthread_mutex_lock(&wakeNorthMutex);
+            pthread_cond_broadcast(&wakeNorthCond);
+            pthread_mutex_unlock(&wakeNorthMutex);
+        } else {
+        }
+
         directionsInitialized = 4;
         pthread_cond_broadcast(&wakeDirectionsCond);
         pthread_mutex_unlock(&wakeDirectionsMutex);
@@ -228,13 +240,13 @@ int main(int argc, char *argv[]) {
 
     }
 
-/*
+
     printf("-------------------------------------\n");
     printf("-------------------------------------\n");
     printf("-------------------------------------\n");
     printf("Simulation Over!\n");
     printf("Writing to Log!\n");
-*/
+
     threadSafeWriteToLog("CarID  Direction  Arrival-Time  Cross-Time  Wait-Time");
     threadSafeWriteToLog("-----------------------------------------------------");
 
@@ -249,8 +261,19 @@ int main(int argc, char *argv[]) {
         memset(&crossTimeTM, '\0', sizeof(struct tm));
         localtime_r(&crossTime, &crossTimeTM);
 
+        string directionString = "";
+        if (car->direction == WEST) {
+            directionString = "W";
+        } else if (car->direction == NORTH) {
+            directionString = "N";
+        } else if (car->direction == SOUTH) {
+            directionString = "S";
+        } else if (car->direction == EAST) {
+            directionString = "E";
+        }
+
         logFile << "   " << car->carid << "    \t"
-                << car->directionString << "     \t"
+                << directionString << "     \t"
                 << arrivalTimeTM.tm_hour << ":" << arrivalTimeTM.tm_min << ":" << arrivalTimeTM.tm_sec << "  \t"
                 << crossTimeTM.tm_hour << ":" << crossTimeTM.tm_min << ":" << crossTimeTM.tm_sec << "  \t"
                 << car->waitTime
@@ -270,9 +293,9 @@ int main(int argc, char *argv[]) {
                 << "  \t" << event->description << endl;
     }
 
-/*
+
     printf("Log finished!\n");
-*/
+
     logFile.close();
     return 0;
 }
@@ -282,6 +305,7 @@ void *policeOfficerThread(void *) {
         pthread_mutex_lock(&currentTimeMutex);
         if (currentTime == sTime) {
             pthread_mutex_unlock(&currentTimeMutex);
+            threadSafeWriteToConsole("Terminating police officer thread!");
             pthread_exit(0);
         }
         pthread_mutex_unlock(&currentTimeMutex);
@@ -304,7 +328,7 @@ void *policeOfficerThread(void *) {
             policeOfficerIsGaming = true;
             policeOfficerGamingTime = 999999999;
             allEvents.push_back(new Event(currentTime, "Cell Phone"));
-            // threadSafeWriteToConsole("Police officer is now gaming");
+            threadSafeWriteToConsole("Police officer is now gaming");
 
             while (policeOfficerGamingTime > 0) {
                 pthread_cond_wait(&wakePoliceOfficerCond, &wakePoliceOfficerMutex);
@@ -320,7 +344,7 @@ void *policeOfficerThread(void *) {
         //Find current direction flow
         prioritizeDirections();
         if (!flowingDirection->cars.empty()) {
-            // cout << "Direction from " << flowingDirection->name << " is moving!" << endl;
+            cout << "Direction from " << flowingDirection->name << " is moving!" << endl;
             Car *passingCar = flowingDirection->cars.front();
             passingCar->crossTime = currentTime;
             flowingDirection->cars.pop_front();
@@ -359,7 +383,7 @@ void *directionThread(void *directionPtr) {
         pthread_mutex_lock(&currentTimeMutex);
         if (currentTime == sTime) {
             pthread_mutex_unlock(&currentTimeMutex);
-            //threadSafeWriteToConsole("Terminating " + currentDirection->name + " thread!");
+            threadSafeWriteToConsole("Terminating " + currentDirection->name + " thread!");
             pthread_exit(0);
         }
         pthread_mutex_unlock(&currentTimeMutex);
@@ -373,27 +397,12 @@ void *directionThread(void *directionPtr) {
         //threadSafeWriteToConsole(flowingDirection->name + " Thread Initialized!");
         double random = ((double) rand() / (RAND_MAX));
         if (random < currentDirection->probability) {
-            //  threadSafeWriteToConsole(
-            //          "Car arrives at " + currentDirection->name + " since " + to_string(random) + " < " +
-            //          to_string(currentDirection->probability));
+            threadSafeWriteToConsole(
+                    "Car arrives at " + currentDirection->name + " since " + to_string(random) + " < " +
+                    to_string(currentDirection->probability));
             Car *car = new Car();
             car->arrivalTime = currentTime;
             car->direction = currentDirection->ID;
-
-            switch (car->direction) {
-                case WEST:
-                    car->directionString = "W";
-                    break;
-                case EAST:
-                    car->directionString = "E";
-                    break;
-                case NORTH:
-                    car->directionString = "N";
-                    break;
-                case SOUTH:
-                    car->directionString = "S";
-                    break;
-            }
 
             currentDirection->cars.emplace_back(car);
             allCars.push_back(car);
@@ -401,11 +410,35 @@ void *directionThread(void *directionPtr) {
             pthread_mutex_lock(&honkPoliceOfficerMutex);
             if (!policeOfficerIsNotified && policeOfficerIsGaming) {
                 allEvents.push_back(new Event(currentTime, "Honk"));
-                //threadSafeWriteToConsole("Honk!");
+                threadSafeWriteToConsole("Honk!");
                 policeOfficerIsNotified = true;
                 policeOfficerGamingTime = 3;
             }
             pthread_mutex_unlock(&honkPoliceOfficerMutex);
+        } else {
+            if (currentDirection->ID == NORTH) {
+                northSleepingTime = 20;
+                threadSafeWriteToConsole("North is now sleeping for 20 seconds!");
+                if (policeOfficerIsGaming) {
+                    pthread_mutex_lock(&wakeMainMutex);
+                    remainingDirectionThreads++;
+                    pthread_cond_broadcast(&wakeMainCond);
+                    pthread_mutex_unlock(&wakeMainMutex);
+                } else {
+                    pthread_mutex_lock(&wakePoliceOfficerMutex);
+                    remainingDirectionThreads++;
+                    pthread_cond_broadcast(&wakePoliceOfficerCond);
+                    pthread_mutex_unlock(&wakePoliceOfficerMutex);
+                }
+
+                while (northSleepingTime > 0) {
+                    pthread_mutex_lock(&wakeNorthMutex);
+                    pthread_cond_wait(&wakeNorthCond, &wakeNorthMutex);
+                    threadSafeWriteToConsole("North sleeping for " + to_string(northSleepingTime) + "!");
+                    pthread_mutex_unlock(&wakeNorthMutex);
+                }
+                continue;
+            }
         }
 
         if (policeOfficerIsGaming) {
@@ -539,10 +572,10 @@ void prioritizeDirections() {
 
         for (auto &car : dir->cars) {
             if (car->waitTime >= 20) {
-                //threadSafeWriteToConsole(
-                //        "Priority has changed from : " + flowingDirection->name + " to " + dir->name);
+                threadSafeWriteToConsole(
+                        "Priority has changed from : " + flowingDirection->name + " to " + dir->name);
                 flowingDirection = dir;
-                //threadSafeWriteToConsole("Reason : The driver is very angry!");
+                threadSafeWriteToConsole("Reason : The driver is very angry!");
                 return;
             }
         }
@@ -584,9 +617,9 @@ void prioritizeDirections() {
     });
 
     if (!candidateDirections.empty()) {
-        //threadSafeWriteToConsole(
-        //        "Priority has changed from : " + flowingDirection->name + " to " + candidateDirections.front()->name);
-        //threadSafeWriteToConsole("Reason : " + logString);
+        threadSafeWriteToConsole(
+                "Priority has changed from : " + flowingDirection->name + " to " + candidateDirections.front()->name);
+        threadSafeWriteToConsole("Reason : " + logString);
         flowingDirection = candidateDirections.front();
     }
 }
